@@ -302,7 +302,7 @@ func (c *Controller) syncPortAllocated() {
 			continue
 		}
 		gsOwnerId := getOwner(gs)
-		ports := findPorts(gs)
+		ports := findHostPorts(gs)
 		c.portAllocator.SetUsed(gsOwnerId, string(gs.UID), ports)
 	}
 }
@@ -326,7 +326,7 @@ func (c *Controller) syncGameServer(key string) error {
 	}
 
 	if gs.DeletionTimestamp != nil {
-		c.portAllocator.Release(getOwner(gs), string(gs.UID), findPorts(gs))
+		c.portAllocator.Release(getOwner(gs), string(gs.UID), findHostPorts(gs))
 	}
 
 	gsCopy := gs.DeepCopy()
@@ -387,10 +387,13 @@ func (c *Controller) tryAllocatePorts(gs *carrierv1alpha1.GameServer) (*carrierv
 	if IsDynamicPortAllocated(gs) {
 		return gs, nil
 	}
-	if IsLoadBalancerPortExist(gs) {
+	if IsNoPortPolicyExist(gs) {
 		return gs, nil
 	}
-	allocateType := getAllocateType(gs)
+	if IsLoadBalancerPortPolicyExist(gs) {
+		return gs, nil
+	}
+	allocateType := getDynamicAllocateType(gs)
 	// only allow use multi ports or directly use port range.
 	gsCopy := gs.DeepCopy()
 	var (

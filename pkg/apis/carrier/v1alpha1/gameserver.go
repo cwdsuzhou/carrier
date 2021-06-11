@@ -104,8 +104,10 @@ const (
 	Static PortPolicy = "Static"
 	// Dynamic PortPolicy will dynamically allocated host Ports.
 	Dynamic PortPolicy = "Dynamic"
-	// LoadBalancer PortPolicy will apply the port allocated from external load balacner.
+	// LoadBalancer PortPolicy will apply the port allocated from external load balancer.
 	LoadBalancer PortPolicy = "LoadBalancer"
+	// None PortPolicy describes GameServer hostNetwork. If hostNetwork will be set.
+	None PortPolicy = "None"
 )
 
 // GameServerPort defines a set of Ports that.
@@ -117,7 +119,7 @@ type GameServerPort struct {
 	ContainerPort *int32 `json:"containerPort,omitempty"`
 	// ContainerPortRange is the port range that is being opened on the specified container's process.
 	ContainerPortRange *PortRange `json:"containerPortRange,omitempty"`
-	// PortPolicy describes the policy to allocate ports. Dynamic is currently not implemented.
+	// PortPolicy describes the policy to allocate ports.
 	PortPolicy PortPolicy `json:"portPolicy,omitempty"`
 	// HostPort the port exposed on the host for clients to connect to.
 	HostPort *int32 `json:"hostPort,omitempty"`
