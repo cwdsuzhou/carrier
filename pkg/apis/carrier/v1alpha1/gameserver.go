@@ -59,6 +59,9 @@ type GameServerSpec struct {
 	// Template describes the Pod that will be created for the GameServer.
 	Template corev1.PodTemplateSpec `json:"template"`
 
+	// PVC claim template describes the Pod that will be created for the GameServer.
+	VolumeClaimTemplates []corev1.PersistentVolumeClaim `json:"volumeClaimTemplates"`
+
 	// Constraints describes the constraints of GameServer.
 	// This filed may be added or changed by controller or manually.
 	// If anyone of them is `NotInService` and Effective is `True`,

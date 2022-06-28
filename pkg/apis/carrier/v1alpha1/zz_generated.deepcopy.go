@@ -362,6 +362,7 @@ func (in *GameServerSpec) DeepCopyInto(out *GameServerSpec) {
 		}
 	}
 	in.Template.DeepCopyInto(&out.Template)
+	in.ClaimTemplate.DeepCopyInto(&out.ClaimTemplate)
 	if in.Constraints != nil {
 		in, out := &in.Constraints, &out.Constraints
 		*out = make([]Constraint, len(*in))

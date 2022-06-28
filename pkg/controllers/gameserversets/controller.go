@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -505,8 +506,16 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 		candidates := make([]*carrierv1alpha1.GameServer, len(potentialDeletions))
 		copy(candidates, potentialDeletions)
 		deletables, deleteCandidates, runnings := classifyGameServers(candidates, false)
+
+		stateful := IsStateful(gsSet)
 		// sort running gs
-		runnings = sortGameServers(runnings, gsSet.Spec.Scheduling, counts)
+		if !stateful {
+			runnings = sortGameServers(runnings, gsSet.Spec.Scheduling, counts)
+		} else {
+			// sort the condemned GS by their ordinals
+			sort.Sort(ascendingOrdinal(runnings))
+		}
+
 		// sort Running GameServers for inpalce updating.
 		inPlaceUpdating, _ := IsGameServerSetInPlaceUpdating(gsSet)
 		if inPlaceUpdating {
@@ -526,8 +535,11 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 			toDelete = BurstReplicas + currentCandidateCount
 			exceedBurst = true
 		}
-
-		toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[0:toDelete]...)
+		if !stateful {
+			toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[0:toDelete]...)
+		} else {
+			toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[len(potentialDeletions)-toDelete:]...)
+		}
 	}
 	return toAdd, toDeleteGameServers, exceedBurst
 }
@@ -589,6 +601,41 @@ func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, cou
 	var errs []error
 	gs := BuildGameServer(gsSet)
 	gameservers.ApplyDefaults(gs)
+	if IsStateful(gsSet) {
+		gsCopy := gs.DeepCopy()
+		i := 0
+		created := 0
+		for {
+			name := fmt.Sprintf("%v-%v", gsSet.Name, i)
+			_, err := c.gameServerLister.GameServers(gsSet.Namespace).Get(name)
+			if err == nil {
+				i++
+				continue
+			}
+			if k8serrors.IsNotFound(err) {
+				gsCopy.Name = name
+				newGS, err := c.carrierClient.CarrierV1alpha1().GameServers(gsCopy.Namespace).Create(context.TODO(), gsCopy, metav1.CreateOptions{})
+				if k8serrors.IsAlreadyExists(err) {
+					i++
+					continue
+				}
+				if err != nil {
+					errs = append(errs, errors.Wrapf(err, "error creating GameServer for GameServerSet %s", gsSet.Name))
+					continue
+				}
+				created++
+				c.recorder.Eventf(gsSet, corev1.EventTypeNormal,
+					"SuccessfulCreate", "Created GameServer : %s", newGS.Name)
+			}
+			if err != nil {
+				return err
+			}
+			if created == count {
+				break
+			}
+		}
+		return utilerrors.NewAggregate(errs)
+	}
 	workqueue.ParallelizeUntil(context.Background(), BurstReplicas, count, func(piece int) {
 		newGS, err := c.carrierClient.CarrierV1alpha1().GameServers(gs.Namespace).Create(context.TODO(), gs, metav1.CreateOptions{})
 		if err != nil {

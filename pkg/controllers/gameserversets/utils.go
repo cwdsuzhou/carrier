@@ -17,6 +17,7 @@ package gameserversets
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 
 	"github.com/pkg/errors"
@@ -143,4 +144,51 @@ func ListGameServersByGameServerSetOwner(gameServerLister listerv1.GameServerLis
 	}
 
 	return result, nil
+}
+
+func IsStateful(gsSet *carrierv1alpha1.GameServerSet) bool {
+	return len(gsSet.Spec.Template.Spec.VolumeClaimTemplates) > 0
+}
+
+// ascendingOrdinal is a sort.Interface that Sorts a list of Pods based on the ordinals extracted
+// from the Pod. Pod's that have not been constructed by StatefulSet's have an ordinal of -1, and are therefore pushed
+// to the front of the list.
+type ascendingOrdinal []*carrierv1alpha1.GameServer
+
+func (ao ascendingOrdinal) Len() int {
+	return len(ao)
+}
+
+func (ao ascendingOrdinal) Swap(i, j int) {
+	ao[i], ao[j] = ao[j], ao[i]
+}
+
+func (ao ascendingOrdinal) Less(i, j int) bool {
+	return getOrdinal(ao[i]) < getOrdinal(ao[j])
+}
+
+//  getOrdinal gets pod's ordinal. If pod has no ordinal, -1 is returned.
+func getOrdinal(gs *carrierv1alpha1.GameServer) int {
+	_, ordinal := getParentNameAndOrdinal(gs)
+	return ordinal
+}
+
+// statefulGSRegex is a regular expression that extracts the parent StatefulSet and ordinal from the Name of a Pod
+var statefulGSRegex = regexp.MustCompile("(.*)-([0-9]+)$")
+
+// getParentNameAndOrdinal gets the name of pod's parent StatefulSet and pod's ordinal as extracted from its Name. If
+// the Pod was not created by a StatefulSet, its parent is considered to be empty string, and its ordinal is considered
+// to be -1.
+func getParentNameAndOrdinal(gs *carrierv1alpha1.GameServer) (string, int) {
+	parent := ""
+	ordinal := -1
+	subMatches := statefulGSRegex.FindStringSubmatch(gs.Name)
+	if len(subMatches) < 3 {
+		return parent, ordinal
+	}
+	parent = subMatches[1]
+	if i, err := strconv.ParseInt(subMatches[2], 10, 32); err == nil {
+		ordinal = int(i)
+	}
+	return parent, ordinal
 }
