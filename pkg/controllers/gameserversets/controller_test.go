@@ -211,7 +211,7 @@ func TestComputeExpectation(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			toAdd, toDelete, _ := computeExpectation(testCase.gsSet, testCase.gsLister, &Counter{
 				nodeGameServer: map[string]uint64{},
-			})
+			}, false)
 			if toAdd != testCase.toAdd {
 				t.Errorf("To add :%v\n desired: %v", toAdd, testCase.toAdd)
 			}

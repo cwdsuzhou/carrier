@@ -47,6 +47,12 @@ spec:
               required:
                 - template
               properties:
+                volumeClaimTemplates:
+                  type: array
+                  minItems: 0
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 template:
                   type: object
                   required:
@@ -189,6 +195,12 @@ spec:
                       required:
                         - template
                       properties:
+                        volumeClaimTemplates:
+                          type: array
+                          minItems: 0
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
                         template:
                           x-kubernetes-preserve-unknown-fields: true
                           type: object
@@ -350,6 +362,12 @@ spec:
                       required:
                         - template
                       properties:
+                        volumeClaimTemplates:
+                          type: array
+                          minItems: 0
+                          items:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
                         template:
                           x-kubernetes-preserve-unknown-fields: true
                           type: object

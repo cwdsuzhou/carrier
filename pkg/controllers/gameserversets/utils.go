@@ -150,25 +150,25 @@ func IsStateful(gsSet *carrierv1alpha1.GameServerSet) bool {
 	return len(gsSet.Spec.Template.Spec.VolumeClaimTemplates) > 0
 }
 
-// ascendingOrdinal is a sort.Interface that Sorts a list of Pods based on the ordinals extracted
+// descendingOrdinal is a sort.Interface that Sorts a list of Pods based on the ordinals extracted
 // from the Pod. Pod's that have not been constructed by StatefulSet's have an ordinal of -1, and are therefore pushed
 // to the front of the list.
-type ascendingOrdinal []*carrierv1alpha1.GameServer
+type descendingOrdinal []*carrierv1alpha1.GameServer
 
-func (ao ascendingOrdinal) Len() int {
+func (ao descendingOrdinal) Len() int {
 	return len(ao)
 }
 
-func (ao ascendingOrdinal) Swap(i, j int) {
+func (ao descendingOrdinal) Swap(i, j int) {
 	ao[i], ao[j] = ao[j], ao[i]
 }
 
-func (ao ascendingOrdinal) Less(i, j int) bool {
-	return getOrdinal(ao[i]) < getOrdinal(ao[j])
+func (ao descendingOrdinal) Less(i, j int) bool {
+	return GetOrdinal(ao[i]) > GetOrdinal(ao[j])
 }
 
-//  getOrdinal gets pod's ordinal. If pod has no ordinal, -1 is returned.
-func getOrdinal(gs *carrierv1alpha1.GameServer) int {
+//  GetOrdinal gets pod's ordinal. If pod has no ordinal, -1 is returned.
+func GetOrdinal(gs *carrierv1alpha1.GameServer) int {
 	_, ordinal := getParentNameAndOrdinal(gs)
 	return ordinal
 }
@@ -191,4 +191,12 @@ func getParentNameAndOrdinal(gs *carrierv1alpha1.GameServer) (string, int) {
 		ordinal = int(i)
 	}
 	return parent, ordinal
+}
+
+func genGameServerName(gss *carrierv1alpha1.GameServerSet, id int) string {
+	return fmt.Sprintf("%v-%v", gss.Labels[util.SquadNameLabelKey], id)
+}
+
+func genServiceName(gss *carrierv1alpha1.GameServerSet) string {
+	return gss.Labels[util.SquadNameLabelKey]
 }

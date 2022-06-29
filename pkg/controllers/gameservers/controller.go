@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -49,12 +50,16 @@ import (
 
 // Controller is a the main GameServer crd controller
 type Controller struct {
-	podLister          corelisterv1.PodLister
-	podSynced          cache.InformerSynced
-	gameServerLister   listerv1.GameServerLister
-	gameServerSynced   cache.InformerSynced
-	nodeLister         corelisterv1.NodeLister
-	nodeSynced         cache.InformerSynced
+	podLister        corelisterv1.PodLister
+	podSynced        cache.InformerSynced
+	gameServerLister listerv1.GameServerLister
+	gameServerSynced cache.InformerSynced
+	nodeLister       corelisterv1.NodeLister
+	nodeSynced       cache.InformerSynced
+
+	pvcLister corelisterv1.PersistentVolumeClaimLister
+	pvcSynced cache.InformerSynced
+
 	queue              workqueue.RateLimitingInterface
 	nodeTaintWorkQueue workqueue.RateLimitingInterface // handles node autoscaler taint only
 	kubeClient         kubernetes.Interface
@@ -72,13 +77,18 @@ func NewController(
 	minPort, maxPort int) *Controller {
 
 	pods := kubeInformerFactory.Core().V1().Pods()
+	pvcs := kubeInformerFactory.Core().V1().PersistentVolumeClaims()
 	gameServers := carrierInformerFactory.Carrier().V1alpha1().GameServers()
 	gsInformer := gameServers.Informer()
 	nodeInformer := kubeInformerFactory.Core().V1().Nodes()
 
 	c := &Controller{
-		podLister:        pods.Lister(),
-		podSynced:        pods.Informer().HasSynced,
+		podLister: pods.Lister(),
+		podSynced: pods.Informer().HasSynced,
+
+		pvcLister: pvcs.Lister(),
+		pvcSynced: pvcs.Informer().HasSynced,
+
 		gameServerLister: gameServers.Lister(),
 		gameServerSynced: gsInformer.HasSynced,
 		nodeLister:       nodeInformer.Lister(),
@@ -611,6 +621,15 @@ func (c *Controller) createGameServerPod(gs *carrierv1alpha1.GameServer) (*carri
 			"build Pod for GameServer %s", gs.Name)
 		return gs, errors.Wrapf(err, "error building Pod for GameServer %s", gs.Name)
 	}
+	if IsStateful(gs) {
+		updateStorage(gs, pod)
+	}
+
+	if err := c.createPersistentVolumeClaims(gs); err != nil {
+		c.recorder.Eventf(gs, corev1.EventTypeWarning, "create pvc", "create pv for gs %v failed: %v",
+			gs.Name, err)
+		return gs, err
+	}
 
 	klog.V(4).Infof("Creating pod: %v for GameServer", pod.Name)
 	pod, err = c.kubeClient.CoreV1().Pods(gs.Namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
@@ -703,6 +722,34 @@ func (c *Controller) reconcileGameServerState(gs *carrierv1alpha1.GameServer, po
 		gs.Status.State = carrierv1alpha1.GameServerUnknown
 	}
 	return
+}
+
+func (c *Controller) createPersistentVolumeClaims(gs *carrierv1alpha1.GameServer) error {
+	var errs []error
+	for _, claim := range getPersistentVolumeClaims(gs) {
+		pvc, err := c.pvcLister.PersistentVolumeClaims(gs.Namespace).Get(claim.Name)
+		switch {
+		case k8serrors.IsNotFound(err):
+			pvc, err = c.kubeClient.CoreV1().PersistentVolumeClaims(gs.Namespace).Create(context.TODO(), &claim,
+				metav1.CreateOptions{})
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to create PVC %s: %s", claim.Name, err))
+			}
+			if err == nil || !k8serrors.IsAlreadyExists(err) {
+				c.recorder.Eventf(gs, corev1.EventTypeNormal, "create pvc", "create pvc %v success", pvc.Name)
+			}
+		case err != nil:
+			errs = append(errs, fmt.Errorf("failed to retrieve PVC %s: %s", claim.Name, err))
+			c.recorder.Eventf(gs, corev1.EventTypeWarning, "failed to retrieve PVC", "create pv for gs %v failed: %v",
+				gs.Name, err)
+		case err == nil:
+			if pvc.DeletionTimestamp != nil {
+				errs = append(errs, fmt.Errorf("pvc %s is being deleted", claim.Name))
+			}
+		}
+		// TODO: Check resource requirements and accessmodes, update if necessary
+	}
+	return utilerrors.NewAggregate(errs)
 }
 
 // AddNotInServiceConstraint will add `NotInService` constraint

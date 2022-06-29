@@ -15,6 +15,7 @@
 package gameservers
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pkg/errors"
@@ -558,4 +559,63 @@ func setHostPortRange(gs *carrierv1alpha1.GameServer, ports []int) {
 			}
 		}
 	}
+}
+
+// getPersistentVolumeClaimName gets the name of PersistentVolumeClaim for a Pod with an ordinal index of ordinal. claim
+// must be a PersistentVolumeClaim from set's VolumeClaims template.
+func getPersistentVolumeClaimName(gs *carrierv1alpha1.GameServer, claim *corev1.PersistentVolumeClaim) string {
+	// NOTE: This name format is used by the heuristics for zone spreading in ChooseZoneForVolume
+	return fmt.Sprintf("%s-%s", claim.Name, gs.Name)
+}
+
+// getPersistentVolumeClaims gets a map of PersistentVolumeClaims to their template names, as defined in set. The
+// returned PersistentVolumeClaims are each constructed with a the name specific to the Pod. This name is determined
+// by getPersistentVolumeClaimName.
+func getPersistentVolumeClaims(gs *carrierv1alpha1.GameServer) map[string]corev1.PersistentVolumeClaim {
+	templates := gs.Spec.VolumeClaimTemplates
+	claims := make(map[string]corev1.PersistentVolumeClaim, len(templates))
+	for i := range templates {
+		claim := templates[i]
+		claim.Name = getPersistentVolumeClaimName(gs, &claim)
+		claim.Namespace = gs.Namespace
+		if claim.Labels != nil {
+			for key, value := range gs.Labels {
+				claim.Labels[key] = value
+			}
+		} else {
+			claim.Labels = gs.Labels
+		}
+		claims[templates[i].Name] = claim
+	}
+	return claims
+}
+
+// updateStorage updates pod's Volumes to conform with the PersistentVolumeClaim of set's templates. If pod has
+// conflicting local Volumes these are replaced with Volumes that conform to the set's templates.
+func updateStorage(gs *carrierv1alpha1.GameServer, pod *corev1.Pod) {
+	currentVolumes := pod.Spec.Volumes
+	claims := getPersistentVolumeClaims(gs)
+	newVolumes := make([]corev1.Volume, 0, len(claims))
+	for name, claim := range claims {
+		newVolumes = append(newVolumes, corev1.Volume{
+			Name: name,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: claim.Name,
+					// TODO: Use source definition to set this value when we have one.
+					ReadOnly: false,
+				},
+			},
+		})
+	}
+	for i := range currentVolumes {
+		if _, ok := claims[currentVolumes[i].Name]; !ok {
+			newVolumes = append(newVolumes, currentVolumes[i])
+		}
+	}
+	pod.Spec.Volumes = newVolumes
+}
+
+func IsStateful(gs *carrierv1alpha1.GameServer) bool {
+	return len(gs.Spec.VolumeClaimTemplates) > 0
 }

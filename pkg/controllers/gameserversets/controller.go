@@ -297,7 +297,9 @@ func (c *Controller) syncGameServerSet(key string) error {
 func (c *Controller) manageReplicas(key string, list []*carrierv1alpha1.GameServer,
 	gsSet *carrierv1alpha1.GameServerSet) error {
 	klog.Infof("Current GameServer number of GameServerSet %v: %v", key, len(list))
-	gameServersToAdd, toDeleteList, exceedBurst := computeExpectation(gsSet, list, c.counter)
+
+	stateful := IsStateful(gsSet)
+	gameServersToAdd, toDeleteList, exceedBurst := computeExpectation(gsSet, list, c.counter, stateful)
 	status := computeStatus(list, gsSet)
 	klog.V(5).Infof("Reconciling GameServerSet name: %v, spec: %v, status: %v", key, gsSet.Spec, status)
 	if exceedBurst {
@@ -312,7 +314,7 @@ func (c *Controller) manageReplicas(key string, list []*carrierv1alpha1.GameServ
 	}
 	var toDeletes, candidates, runnings []*carrierv1alpha1.GameServer
 	if len(toDeleteList) > 0 {
-		toDeletes, candidates, runnings = classifyGameServers(toDeleteList, false)
+		toDeletes, candidates, runnings = classifyGameServers(toDeleteList, false, stateful)
 		// GameServers can be deleted directly.
 		c.recorder.Eventf(gsSet, corev1.EventTypeNormal, "ToDelete",
 			"Created GameServer: %+v, can delete: %v", len(list), len(toDeleteList))
@@ -377,7 +379,7 @@ func (c *Controller) doInPlaceUpdate(gsSet *carrierv1alpha1.GameServerSet) error
 	// 2. Update image, remove annotation
 
 	// update game servers
-	canUpdates, waitings, runnings := classifyGameServers(oldGameServers, true)
+	canUpdates, waitings, runnings := classifyGameServers(oldGameServers, true, false)
 	var candidates []*carrierv1alpha1.GameServer
 	candidates = append(candidates, sortGameServersByCreationTime(canUpdates)...)
 	candidates = append(candidates, sortGameServersByCreationTime(waitings)...)
@@ -450,7 +452,7 @@ func (c *Controller) getOldAndNewReplicas(gsSet *carrierv1alpha1.GameServerSet) 
 // This will happen when some `GameServers` stopped and have not been deleted. When these GameServers deleted,
 // we will reconcile and add more `GameServers`, which will not affect the final results.
 func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
-	list []*carrierv1alpha1.GameServer, counts *Counter) (int, []*carrierv1alpha1.GameServer, bool) {
+	list []*carrierv1alpha1.GameServer, counts *Counter, stateful bool) (int, []*carrierv1alpha1.GameServer, bool) {
 	excludeConstraintGS := excludeConstraints(gsSet)
 	var upCount int
 
@@ -505,15 +507,11 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 		toDelete := -diff
 		candidates := make([]*carrierv1alpha1.GameServer, len(potentialDeletions))
 		copy(candidates, potentialDeletions)
-		deletables, deleteCandidates, runnings := classifyGameServers(candidates, false)
+		deletables, deleteCandidates, runnings := classifyGameServers(candidates, false, stateful)
 
-		stateful := IsStateful(gsSet)
 		// sort running gs
 		if !stateful {
 			runnings = sortGameServers(runnings, gsSet.Spec.Scheduling, counts)
-		} else {
-			// sort the condemned GS by their ordinals
-			sort.Sort(ascendingOrdinal(runnings))
 		}
 
 		// sort Running GameServers for inpalce updating.
@@ -535,11 +533,7 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 			toDelete = BurstReplicas + currentCandidateCount
 			exceedBurst = true
 		}
-		if !stateful {
-			toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[0:toDelete]...)
-		} else {
-			toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[len(potentialDeletions)-toDelete:]...)
-		}
+		toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[0:toDelete]...)
 	}
 	return toAdd, toDeleteGameServers, exceedBurst
 }
@@ -603,10 +597,13 @@ func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, cou
 	gameservers.ApplyDefaults(gs)
 	if IsStateful(gsSet) {
 		gsCopy := gs.DeepCopy()
+		gsCopy.GenerateName = ""
+		gsCopy.Spec.Template.Spec.Subdomain = genServiceName(gsSet)
 		i := 0
 		created := 0
 		for {
-			name := fmt.Sprintf("%v-%v", gsSet.Name, i)
+			// todo parallel creating
+			name := genGameServerName(gsSet, i)
 			_, err := c.gameServerLister.GameServers(gsSet.Namespace).Get(name)
 			if err == nil {
 				i++
@@ -614,14 +611,17 @@ func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, cou
 			}
 			if k8serrors.IsNotFound(err) {
 				gsCopy.Name = name
+				gsCopy.Spec.Template.Spec.Hostname = gsCopy.Name
+
 				newGS, err := c.carrierClient.CarrierV1alpha1().GameServers(gsCopy.Namespace).Create(context.TODO(), gsCopy, metav1.CreateOptions{})
 				if k8serrors.IsAlreadyExists(err) {
 					i++
 					continue
 				}
 				if err != nil {
-					errs = append(errs, errors.Wrapf(err, "error creating GameServer for GameServerSet %s", gsSet.Name))
-					continue
+					errs = append(errs, errors.Wrapf(err, "error creating GameServer %v for GameServerSet %s",
+						gsCopy.Name, gsSet.Name))
+					return utilerrors.NewAggregate(errs)
 				}
 				created++
 				c.recorder.Eventf(gsSet, corev1.EventTypeNormal,
@@ -837,7 +837,7 @@ func excludeConstraints(gsSet *carrierv1alpha1.GameServerSet) bool {
 }
 
 // classifyGameServers classify the GameServers to deletables, deleteCandidates, runnings
-func classifyGameServers(toDelete []*carrierv1alpha1.GameServer, updating bool) (
+func classifyGameServers(toDelete []*carrierv1alpha1.GameServer, updating, stateful bool) (
 	deletables, deleteCandidates, runnings []*carrierv1alpha1.GameServer) {
 	var inPlaceUpdatings, notReadys []*carrierv1alpha1.GameServer
 	for _, gs := range toDelete {
@@ -858,6 +858,9 @@ func classifyGameServers(toDelete []*carrierv1alpha1.GameServer, updating bool) 
 		default:
 			runnings = append(runnings, gs)
 		}
+	}
+	if stateful {
+		sort.Sort(descendingOrdinal(runnings))
 	}
 	// benefit for sort
 	all := append(inPlaceUpdatings, notReadys...)
