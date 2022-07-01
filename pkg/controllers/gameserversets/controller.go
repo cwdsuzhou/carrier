@@ -501,10 +501,15 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 			exceedBurst = true
 		}
 	} else if diff < 0 {
+		toDelete := -diff
+		if stateful {
+			sort.Sort(descendingOrdinal(potentialDeletions))
+			return toAdd, potentialDeletions[:toDelete], exceedBurst
+		}
+
 		// 1. delete not ready
 		// 2. delete deletable
 		// 3. try delete running
-		toDelete := -diff
 		candidates := make([]*carrierv1alpha1.GameServer, len(potentialDeletions))
 		copy(candidates, potentialDeletions)
 		deletables, deleteCandidates, runnings := classifyGameServers(candidates, false, stateful)
@@ -604,16 +609,20 @@ func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, cou
 		for {
 			// todo parallel creating
 			name := genGameServerName(gsSet, i)
-			_, err := c.gameServerLister.GameServers(gsSet.Namespace).Get(name)
+			gsInCache, err := c.gameServerLister.GameServers(gsSet.Namespace).Get(name)
 			if err == nil {
+				if gsInCache.DeletionTimestamp != nil {
+					return fmt.Errorf("GameServer %v is deleting, retry", name)
+				}
 				i++
 				continue
 			}
+
 			if k8serrors.IsNotFound(err) {
 				gsCopy.Name = name
 				gsCopy.Spec.Template.Spec.Hostname = gsCopy.Name
-
-				newGS, err := c.carrierClient.CarrierV1alpha1().GameServers(gsCopy.Namespace).Create(context.TODO(), gsCopy, metav1.CreateOptions{})
+				var newGS *carrierv1alpha1.GameServer
+				newGS, err = c.carrierClient.CarrierV1alpha1().GameServers(gsCopy.Namespace).Create(context.TODO(), gsCopy, metav1.CreateOptions{})
 				if k8serrors.IsAlreadyExists(err) {
 					i++
 					continue
@@ -685,7 +694,7 @@ func (c *Controller) deleteGameServers(gsSet *carrierv1alpha1.GameServerSet,
 			return
 		}
 		c.recorder.Eventf(gsSet, corev1.EventTypeNormal, "SuccessfulDelete",
-			"Deleted delatable GameServer in state %s : %v", gs.Status.State, gs.Name)
+			"Delete deletable GameServer in state %s : %v", gs.Status.State, gs.Name)
 	})
 	return utilerrors.NewAggregate(errs)
 }
