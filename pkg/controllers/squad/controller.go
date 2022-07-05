@@ -237,8 +237,11 @@ func (c *Controller) syncSquad(key string) error {
 		return err
 	}
 	if scalingEvent {
+		klog.V(4).Infof("Scaling squad %v:%v", squad.Namespace, squad.Name)
 		return c.sync(squad, gsSetList)
 	}
+
+	klog.V(4).Infof("Reconciling squad %v:%v", squad.Namespace, squad.Name)
 
 	switch squad.Spec.Strategy.Type {
 	case carrierv1alpha1.RecreateSquadStrategyType:

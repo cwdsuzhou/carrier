@@ -387,6 +387,7 @@ func InplaceThreshold(squad carrierv1alpha1.Squad) int32 {
 }
 
 func getThreshold(replicas int32, threshold *intstrutil.IntOrString) int32 {
+	klog.V(4).Infof("Canary update get threshold, input threshold: %v, replicas: %v", threshold, replicas)
 	newThreshold, err := intstrutil.GetValueFromIntOrPercent(
 		intstrutil.ValueOrDefault(threshold, intstrutil.FromInt(0)),
 		int(replicas),
@@ -394,6 +395,7 @@ func getThreshold(replicas int32, threshold *intstrutil.IntOrString) int32 {
 	if err != nil {
 		return int32(0)
 	}
+	klog.V(4).Infof("Canary update get threshold newThreshold: %v, replicas: %v", newThreshold, replicas)
 	if int32(newThreshold) > replicas {
 		return replicas
 	}
@@ -684,6 +686,7 @@ func NewGSSetNewReplicas(
 	squad *carrierv1alpha1.Squad,
 	allGSSets []*carrierv1alpha1.GameServerSet,
 	newGSSet *carrierv1alpha1.GameServerSet) (int32, error) {
+	klog.V(4).Infof("Get replicas Strategy.Type: %v", squad.Spec.Strategy.Type)
 	switch squad.Spec.Strategy.Type {
 	case carrierv1alpha1.RollingUpdateSquadStrategyType:
 		// Check if we can scale up.
@@ -710,13 +713,40 @@ func NewGSSetNewReplicas(
 		return squad.Spec.Replicas, nil
 	case carrierv1alpha1.CanaryUpdateSquadStrategyType:
 		allReplicas := GetReplicaCountForGameServerSets(allGSSets)
+		readyReplicas := GetReadyReplicaCountForGameServerSets(allGSSets)
+		if squad.Spec.Strategy.CanaryUpdate.Type == carrierv1alpha1.DeleteFirstGameServerStrategyType {
+			if squad.Spec.Replicas == 0 {
+				return 0, nil
+			}
+			if readyReplicas >= squad.Spec.Replicas {
+				return 0, fmt.Errorf("Waiting for replicas be not ready, current ready: %v", readyReplicas)
+			}
+		}
+		klog.V(4).Infof("Canary update allReplicas: %v", allReplicas)
 		if allReplicas == 0 {
 			// When one of the followings is true, return squad's replicas
 			// 1) The first time create squad
 			// 2) The current number of replicas of all GameServerSet is 0 and needs to be scale up.
+
+			//if squad.Spec.Strategy.CanaryUpdate.Type == carrierv1alpha1.DeleteFirstGameServerStrategyType {
+			//	// min(spec - ready, threshold)
+			//	return int32(integer.IntMin(int(squad.Spec.Replicas-readyReplicas+newGSSet.Status.ReadyReplicas),
+			//		int(CanaryThreshold(*squad)))), nil
+			//}
+
 			return squad.Spec.Replicas, nil
 		}
-		return CanaryThreshold(*squad), nil
+		threshold := CanaryThreshold(*squad)
+		if squad.Spec.Strategy.CanaryUpdate.Type == carrierv1alpha1.DeleteFirstGameServerStrategyType {
+			// min(spec - ready, threshold)
+
+			// upgrade and scaling issue exist here
+
+			// return squad.Spec.Replicas - readyReplicas + newGSSet.Status.ReadyReplicas, nil
+
+			return int32(integer.IntMax(int(squad.Spec.Replicas-readyReplicas+newGSSet.Status.ReadyReplicas), 0)), nil
+		}
+		return threshold, nil
 	case carrierv1alpha1.InplaceUpdateSquadStrategyType:
 		return squad.Spec.Replicas, nil
 	default:

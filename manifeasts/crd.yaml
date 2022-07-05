@@ -341,6 +341,7 @@ spec:
                     - MostAllocated
                     - LeastAllocated
                 strategy:
+                  x-kubernetes-preserve-unknown-fields: true
                   type: object
                   properties:
                     type:

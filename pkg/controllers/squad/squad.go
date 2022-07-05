@@ -361,8 +361,11 @@ func (c *Controller) scale(
 	oldGSSets []*carrierv1alpha1.GameServerSet) error {
 	// If there is only one active GameServerSet then we should scale that up to the full count of the
 	// Squads. If there is no active GameServerSet, then we should scale up the newest GameServerSet.
+	klog.V(4).Infof("GameServerSet desired: %v", squad.Spec.Replicas)
 	if activeOrLatest := FindActiveOrLatest(newGSSet, oldGSSets); activeOrLatest != nil {
-		if activeOrLatest.Spec.Replicas == squad.Spec.Replicas {
+		klog.V(4).Infof("GameServerSet replicas: %v, desired: %v", activeOrLatest.Spec.Replicas, squad.Spec.Replicas)
+		desiredAnn, _ := GetDesiredReplicasAnnotation(activeOrLatest)
+		if activeOrLatest.Spec.Replicas == squad.Spec.Replicas && desiredAnn == squad.Spec.Replicas {
 			return nil
 		}
 		_, _, err := c.scaleGameServerSetAndRecordEvent(activeOrLatest, squad.Spec.Replicas, squad)
@@ -447,7 +450,8 @@ func (c *Controller) scaleGameServerSetAndRecordEvent(
 	newScale int32,
 	squad *carrierv1alpha1.Squad) (bool, *carrierv1alpha1.GameServerSet, error) {
 	// No need to scale
-	if gsSet.Spec.Replicas == newScale {
+	desiredAnn, _ := GetDesiredReplicasAnnotation(gsSet)
+	if gsSet.Spec.Replicas == newScale && desiredAnn == newScale {
 		return false, gsSet, nil
 	}
 	var scalingOperation string
@@ -456,6 +460,7 @@ func (c *Controller) scaleGameServerSetAndRecordEvent(
 	} else {
 		scalingOperation = "down"
 	}
+	klog.V(4).Infof("Scaling GameServerSet replicas: %v", gsSet.Name)
 	scaled, newRS, err := c.scaleGameServerSet(gsSet, newScale, squad, scalingOperation)
 	return scaled, newRS, err
 }
@@ -484,7 +489,13 @@ func (c *Controller) scaleGameServerSet(
 				gsSetCopy.ObjectMeta, util.ScalingReplicasAnnotation)
 			SetScalingAnnotations(gsSetCopy)
 		}
-		SetReplicasAnnotations(gsSetCopy, squad.Spec.Replicas, squad.Spec.Replicas+MaxSurge(*squad))
+		// check if this id an old version
+		if ComputePodSpecHash(&gsSet.Spec.Template.Spec.Template.Spec) != ComputePodSpecHash(&squad.Spec.Template.Spec.
+			Template.Spec) {
+			// 	IsCanaryUpdate do not update annotation again for old rev
+		} else {
+			SetReplicasAnnotations(gsSetCopy, squad.Spec.Replicas, squad.Spec.Replicas+MaxSurge(*squad))
+		}
 		gsSet, err = c.gameServerSetGetter.GameServerSets(gsSetCopy.Namespace).Update(context.TODO(), gsSetCopy,
 			metav1.UpdateOptions{})
 		if err == nil && sizeNeedsUpdate {
@@ -589,7 +600,22 @@ func (c *Controller) isScalingEvent(
 		return false, err
 	}
 	allGSSets := append(oldGSSets, newGSSet)
-	for _, rs := range FilterActiveGameServerSets(allGSSets) {
+	actives := FilterActiveGameServerSets(allGSSets)
+
+	// if canary delete, for scaling this one
+	if len(actives) > 1 && canaryUpdate(squad) {
+		return false, nil
+	}
+
+	// if canary delete, for scaling this one
+	if len(actives) == 1 && canaryUpdate(squad) {
+		desiredAnn, _ := GetDesiredReplicasAnnotation(actives[0])
+		if desiredAnn != actives[0].Spec.Replicas {
+			return false, nil
+		}
+	}
+
+	for _, rs := range actives {
 		desired, ok := GetDesiredReplicasAnnotation(rs)
 		if !ok {
 			continue
@@ -599,6 +625,10 @@ func (c *Controller) isScalingEvent(
 		}
 	}
 	return false, nil
+}
+
+func canaryUpdate(squad *carrierv1alpha1.Squad) bool {
+	return squad.Spec.Strategy.CanaryUpdate != nil && squad.Spec.Strategy.CanaryUpdate.Type == carrierv1alpha1.DeleteFirstGameServerStrategyType
 }
 
 // cleanupUnhealthyReplicas will scale down old GameServerSet with unhealthy replicas,

@@ -122,7 +122,7 @@ func NewController(
 		carrierClient:       carrierClient,
 	}
 	c.workerQueue = workqueue.NewRateLimitingQueue(
-		workqueue.NewItemFastSlowRateLimiter(20*time.Millisecond, 500*time.Millisecond, 5))
+		workqueue.NewItemFastSlowRateLimiter(200*time.Millisecond, 5000*time.Millisecond, 5))
 	s := scheme.Scheme
 	// Register operator types with the runtime scheme.
 	s.AddKnownTypes(carrierv1alpha1.SchemeGroupVersion, &carrierv1alpha1.GameServerSet{})
@@ -539,6 +539,23 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 			exceedBurst = true
 		}
 		toDeleteGameServers = append(toDeleteGameServers, potentialDeletions[0:toDelete]...)
+	} else {
+		if !stateful {
+			return toAdd, toDeleteGameServers, exceedBurst
+		}
+
+		// for stateful but check, index.
+		desireAnn, exist := getDesiredReplicasAnnotation(gsSet)
+		if !exist && gsSet.Spec.Replicas == 0 {
+			return toAdd, toDeleteGameServers, exceedBurst
+		}
+		if desireAnn == gsSet.Status.ReadyReplicas && desireAnn == gsSet.Spec.Replicas {
+			// check order
+			sort.Sort(descendingOrdinal(potentialDeletions))
+			if GetOrdinal(potentialDeletions[0]) != int(gsSet.Status.ReadyReplicas)-1 {
+				return toAdd, []*carrierv1alpha1.GameServer{potentialDeletions[0]}, false
+			}
+		}
 	}
 	return toAdd, toDeleteGameServers, exceedBurst
 }
@@ -901,4 +918,25 @@ func printGameServerName(list []*carrierv1alpha1.GameServer, prefix string) {
 	for _, server := range list {
 		klog.Infof("%v %v", prefix, server.Name)
 	}
+}
+
+// getDesiredReplicasAnnotation returns the number of desired replicas
+func getDesiredReplicasAnnotation(gsSet *carrierv1alpha1.GameServerSet) (int32, bool) {
+	return getIntFromAnnotation(gsSet, util.DesiredReplicasAnnotation)
+}
+
+func getIntFromAnnotation(gsSet *carrierv1alpha1.GameServerSet, annotationKey string) (int32, bool) {
+	annotationValue, ok := gsSet.Annotations[annotationKey]
+	if !ok {
+		return int32(0), false
+	}
+	intValue, err := strconv.Atoi(annotationValue)
+	if err != nil {
+		klog.V(2).Infof("Cannot convert the value %q with annotation key %q for the GameServerSet %q",
+			annotationValue,
+			annotationKey,
+			gsSet.Name)
+		return int32(0), false
+	}
+	return int32(intValue), true
 }
