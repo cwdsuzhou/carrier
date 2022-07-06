@@ -22,7 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
 	"github.com/ocgi/carrier/pkg/util"
@@ -49,11 +49,11 @@ func (c *Controller) rollback(squad *carrierv1alpha1.Squad, gsSetList []*carrier
 	for _, gsSet := range allGSSets {
 		v, err := Revision(gsSet)
 		if err != nil {
-			klog.V(4).Infof("Unable to extract revision from squad's GameServerSet %q: %v", gsSet.Name, err)
+			klog.V(4).ErrorS(err, "Unable to extract revision from squad's GameServerSet", "name", klog.KObj(gsSet))
 			continue
 		}
 		if v == rollbackTo.Revision {
-			klog.V(4).Infof("Found GameServerSet %q with desired revision %d", gsSet.Name, v)
+			klog.V(4).InfoS("Found GameServerSet with desired revision", "name", klog.KObj(gsSet), "revision", v)
 			// rollback by copying gameServerTemplate.Spec from the GameServerSet
 			// revision number will be incremented during the next getAllGameServerSetsAndSyncRevision call
 			// no-op if the spec matches current squad's gameServerTemplate.Spec
@@ -79,13 +79,14 @@ func (c *Controller) rollbackToTemplate(
 	gsSet *carrierv1alpha1.GameServerSet) (bool, error) {
 	performedRollback := false
 	if !EqualGameServerTemplate(&squad.Spec.Template, &gsSet.Spec.Template) {
-		klog.V(4).Infof("Rolling back Squad %q to template spec %+v", squad.Name, gsSet.Spec.Template.Spec)
+		klog.V(4).InfoS("Rolling back Squad to template spec", "name", klog.KObj(squad),
+			"template", gsSet.Spec.Template.Spec)
 		SetFromGameServerSetTemplate(squad, gsSet.Spec.Template)
 		SetSquadAnnotationsTo(squad, gsSet)
 		performedRollback = true
 	} else {
-		klog.V(4).Infof("Rolling back to a revision that contains the "+
-			"same template as current Squad %q, skipping rollback...", squad.Name)
+		klog.V(4).InfoS("Rolling back to a revision that contains the "+
+			"same template as current Squad, skipping rollback...", "name", klog.KObj(squad))
 		eventMsg := fmt.Sprintf("The rollback revision contains the same template as current Squad %q", squad.Name)
 		c.emitRollbackWarningEvent(squad, util.RollbackTemplateUnchanged, eventMsg)
 	}
@@ -95,7 +96,7 @@ func (c *Controller) rollbackToTemplate(
 
 // updateSquadAndClearRollbackTo sets .spec.rollbackTo to nil and update the input Squad
 func (c *Controller) updateSquadAndClearRollbackTo(squad *carrierv1alpha1.Squad) error {
-	klog.V(4).Infof("Cleans up rollbackTo of squad %q", squad.Name)
+	klog.V(4).InfoS("Cleans up rollbackTo of squad", "name", klog.KObj(squad))
 	squad.Spec.RollbackTo = nil
 	if IsCanaryUpdate(squad) {
 		// Rollback all updated GameServer

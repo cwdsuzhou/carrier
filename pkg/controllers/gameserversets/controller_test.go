@@ -28,7 +28,7 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
 	gsfake "github.com/ocgi/carrier/pkg/client/clientset/versioned/fake"

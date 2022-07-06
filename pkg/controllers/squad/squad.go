@@ -27,7 +27,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/integer"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
@@ -83,8 +83,7 @@ func (c *Controller) syncSquadStatus(
 	newGSSet *carrierv1alpha1.GameServerSet,
 	squad *carrierv1alpha1.Squad) error {
 	newStatus := calculateStatus(allGSSets, newGSSet, squad)
-	klog.V(4).Infof("sync squad status: name: %v, spec: %v, status: %v",
-		squad.ObjectMeta, squad.Spec, newStatus)
+	klog.V(4).InfoS("sync squad status", "name", klog.KObj(squad), "spec", squad.Spec, "status", newStatus)
 	if reflect.DeepEqual(squad.Status, newStatus) {
 		return nil
 	}
@@ -361,10 +360,11 @@ func (c *Controller) scale(
 	oldGSSets []*carrierv1alpha1.GameServerSet) error {
 	// If there is only one active GameServerSet then we should scale that up to the full count of the
 	// Squads. If there is no active GameServerSet, then we should scale up the newest GameServerSet.
-	klog.V(4).Infof("GameServerSet desired: %v", squad.Spec.Replicas)
+	klog.V(4).InfoS("GameServerSet desired replicas", "desired", squad.Spec.Replicas)
 	if activeOrLatest := FindActiveOrLatest(newGSSet, oldGSSets); activeOrLatest != nil {
-		klog.V(4).Infof("GameServerSet replicas: %v, desired: %v", activeOrLatest.Spec.Replicas, squad.Spec.Replicas)
-		desiredAnn, _ := GetDesiredReplicasAnnotation(activeOrLatest)
+		klog.V(4).InfoS("GameServerSet replicas info", "current", activeOrLatest.Spec.Replicas,
+			"desired", squad.Spec.Replicas)
+		desiredAnn, _ := util.GetDesiredReplicasAnnotation(activeOrLatest)
 		if activeOrLatest.Spec.Replicas == squad.Spec.Replicas && desiredAnn == squad.Spec.Replicas {
 			return nil
 		}
@@ -450,7 +450,7 @@ func (c *Controller) scaleGameServerSetAndRecordEvent(
 	newScale int32,
 	squad *carrierv1alpha1.Squad) (bool, *carrierv1alpha1.GameServerSet, error) {
 	// No need to scale
-	desiredAnn, _ := GetDesiredReplicasAnnotation(gsSet)
+	desiredAnn, _ := util.GetDesiredReplicasAnnotation(gsSet)
 	if gsSet.Spec.Replicas == newScale && desiredAnn == newScale {
 		return false, gsSet, nil
 	}
@@ -460,7 +460,7 @@ func (c *Controller) scaleGameServerSetAndRecordEvent(
 	} else {
 		scalingOperation = "down"
 	}
-	klog.V(4).Infof("Scaling GameServerSet replicas: %v", gsSet.Name)
+	klog.V(4).InfoS("Scaling GameServerSet replica", "name", klog.KObj(gsSet))
 	scaled, newRS, err := c.scaleGameServerSet(gsSet, newScale, squad, scalingOperation)
 	return scaled, newRS, err
 }
@@ -485,8 +485,8 @@ func (c *Controller) scaleGameServerSet(
 		// Wait for the game server to exit before scaling down
 		// or gracefully update
 		if IsGameServerSetScaling(gsSetCopy, squad) || IsGracefulUpdate(squad) {
-			klog.Infof("Update GameServerSet: %v, annotation `%s`",
-				gsSetCopy.ObjectMeta, util.ScalingReplicasAnnotation)
+			klog.InfoS("Update GameServerSet", "name", klog.KObj(gsSetCopy), "annotation",
+				util.ScalingReplicasAnnotation)
 			SetScalingAnnotations(gsSetCopy)
 		}
 		// check if this id an old version
@@ -533,7 +533,7 @@ func (c *Controller) cleanupSquad(oldGSSets []*carrierv1alpha1.GameServerSet, sq
 	}
 
 	sort.Sort(GameServerSetsByCreationTimestamp(cleanableGSSets))
-	klog.V(4).Infof("Looking to cleanup old GameServerSet for Squad %q", squad.Name)
+	klog.V(4).InfoS("Looking to cleanup old GameServerSet for Squad", "name", klog.KObj(squad))
 
 	for i := int32(0); i < diff; i++ {
 		gsSet := cleanableGSSets[i]
@@ -544,7 +544,7 @@ func (c *Controller) cleanupSquad(oldGSSets []*carrierv1alpha1.GameServerSet, sq
 			gsSet.DeletionTimestamp != nil {
 			continue
 		}
-		klog.V(4).Infof("Trying to cleanup GameServerSet %q for squad %q", gsSet.Name, squad.Name)
+		klog.V(4).InfoS("Trying to cleanup GameServerSet for squad", "GameServerSet", gsSet.Name, "Squad", squad.Name)
 		if err := c.gameServerSetGetter.GameServerSets(gsSet.Namespace).Delete(context.TODO(), gsSet.Name,
 			metav1.DeleteOptions{}); err != nil && !k8serrors.IsNotFound(err) {
 			// Return error instead of aggregating and continuing DELETEs on the theory
@@ -609,14 +609,14 @@ func (c *Controller) isScalingEvent(
 
 	// if canary delete, for scaling this one
 	if len(actives) == 1 && canaryUpdate(squad) {
-		desiredAnn, _ := GetDesiredReplicasAnnotation(actives[0])
+		desiredAnn, _ := util.GetDesiredReplicasAnnotation(actives[0])
 		if desiredAnn != actives[0].Spec.Replicas {
 			return false, nil
 		}
 	}
 
 	for _, rs := range actives {
-		desired, ok := GetDesiredReplicasAnnotation(rs)
+		desired, ok := util.GetDesiredReplicasAnnotation(rs)
 		if !ok {
 			continue
 		}
@@ -651,10 +651,9 @@ func (c *Controller) cleanupUnhealthyReplicas(
 			// cannot scale down this GameServerSet.
 			continue
 		}
-		klog.V(4).Infof("Found %d ready GameServers in old GSSet %s/%s",
-			targetGSSet.Status.ReadyReplicas,
-			targetGSSet.Namespace,
-			targetGSSet.Name)
+		klog.V(4).InfoS("Found eady GameServers in old GSSet",
+			"ready", targetGSSet.Status.ReadyReplicas,
+			"name", klog.KObj(targetGSSet))
 		if targetGSSet.Spec.Replicas == targetGSSet.Status.ReadyReplicas {
 			// no unhealthy replicas found, no scaling required.
 			continue

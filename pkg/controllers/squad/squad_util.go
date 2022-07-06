@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/integer"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
@@ -219,29 +219,8 @@ func EqualGameServerTemplate(template1, template2 *carrierv1alpha1.GameServerTem
 	return apiequality.Semantic.DeepEqual(t1Copy, t2Copy)
 }
 
-// GetDesiredReplicasAnnotation returns the number of desired replicas
-func GetDesiredReplicasAnnotation(gsSet *carrierv1alpha1.GameServerSet) (int32, bool) {
-	return getIntFromAnnotation(gsSet, util.DesiredReplicasAnnotation)
-}
-
 func getMaxReplicasAnnotation(gsSet *carrierv1alpha1.GameServerSet) (int32, bool) {
-	return getIntFromAnnotation(gsSet, util.MaxReplicasAnnotation)
-}
-
-func getIntFromAnnotation(gsSet *carrierv1alpha1.GameServerSet, annotationKey string) (int32, bool) {
-	annotationValue, ok := gsSet.Annotations[annotationKey]
-	if !ok {
-		return int32(0), false
-	}
-	intValue, err := strconv.Atoi(annotationValue)
-	if err != nil {
-		klog.V(2).Infof("Cannot convert the value %q with annotation key %q for the GameServerSet %q",
-			annotationValue,
-			annotationKey,
-			gsSet.Name)
-		return int32(0), false
-	}
-	return int32(intValue), true
+	return util.GetIntFromAnnotation(gsSet, util.MaxReplicasAnnotation)
 }
 
 // SetReplicasAnnotations sets the desiredReplicas and maxReplicas into the annotations
@@ -387,7 +366,7 @@ func InplaceThreshold(squad carrierv1alpha1.Squad) int32 {
 }
 
 func getThreshold(replicas int32, threshold *intstrutil.IntOrString) int32 {
-	klog.V(4).Infof("Canary update get threshold, input threshold: %v, replicas: %v", threshold, replicas)
+	klog.V(4).InfoS("Canary update get threshold", "input threshold", threshold, "replicas", replicas)
 	newThreshold, err := intstrutil.GetValueFromIntOrPercent(
 		intstrutil.ValueOrDefault(threshold, intstrutil.FromInt(0)),
 		int(replicas),
@@ -395,7 +374,7 @@ func getThreshold(replicas int32, threshold *intstrutil.IntOrString) int32 {
 	if err != nil {
 		return int32(0)
 	}
-	klog.V(4).Infof("Canary update get threshold newThreshold: %v, replicas: %v", newThreshold, replicas)
+	klog.V(4).InfoS("Canary update get threshold", "newThreshold", newThreshold, "replicas", replicas)
 	if int32(newThreshold) > replicas {
 		return replicas
 	}
@@ -486,8 +465,8 @@ func MaxRevision(allGSSets []*carrierv1alpha1.GameServerSet) int64 {
 	for _, gsSet := range allGSSets {
 		if v, err := Revision(gsSet); err != nil {
 			// Skip the GameServerSet when it failed to parse their revision information
-			klog.V(4).Infof("Error: %v. Couldn't parse revision for GameServerSet %#v, "+
-				"Squad controller will skip it when reconciling revisions.", err, gsSet)
+			klog.V(4).ErrorS(err, "Error: %v. Couldn't parse revision for GameServerSet, "+
+				"Squad controller will skip it when reconciling revisions.", "name", klog.KObj(gsSet))
 		} else if v > max {
 			max = v
 		}
@@ -501,8 +480,8 @@ func LastRevision(allGSSets []*carrierv1alpha1.GameServerSet) int64 {
 	for _, gsSet := range allGSSets {
 		if v, err := Revision(gsSet); err != nil {
 			// Skip the GameServerSet when it failed to parse their revision information
-			klog.V(4).Infof("Error: %v. Couldn't parse revision for GameServerSet %#v, "+
-				"squad controller will skip it when reconciling revisions.", err, gsSet)
+			klog.V(4).ErrorS(err, "Error: %v. Couldn't parse revision for GameServerSet, "+
+				"Squad controller will skip it when reconciling revisions.", "name", klog.KObj(gsSet))
 		} else if v >= max {
 			secMax = max
 			max = v
@@ -549,7 +528,7 @@ func SetNewGameServerSetAnnotations(
 	oldRevisionInt, err := strconv.ParseInt(oldRevision, 10, 64)
 	if err != nil {
 		if oldRevision != "" {
-			klog.Warningf("Updating GameServerSet revision OldRevision not int %s", err)
+			klog.ErrorS(err, "Updating GameServerSet revision OldRevision not int", "name", klog.KObj(newGSSet))
 			return false
 		}
 		//If the GSSet annotation is empty then initialise it to 0
@@ -557,13 +536,13 @@ func SetNewGameServerSetAnnotations(
 	}
 	newRevisionInt, err := strconv.ParseInt(newRevision, 10, 64)
 	if err != nil {
-		klog.Warningf("Updating GameServerSet revision NewRevision not int %s", err)
+		klog.ErrorS(err, "Updating GameServerSet revision NewRevision not int", "name", klog.KObj(newGSSet))
 		return false
 	}
 	if oldRevisionInt < newRevisionInt {
 		newGSSet.Annotations[util.RevisionAnnotation] = newRevision
 		annotationChanged = true
-		klog.V(4).Infof("Updating GameServerSet %q revision to %s", newGSSet.Name, newRevision)
+		klog.V(4).InfoS("Updating GameServerSet revision", "name", klog.KObj(newGSSet), "new revision", newRevision)
 	}
 	if !exists && SetReplicasAnnotations(newGSSet, squad.Spec.Replicas, squad.Spec.Replicas+MaxSurge(*squad)) {
 		annotationChanged = true
@@ -686,7 +665,6 @@ func NewGSSetNewReplicas(
 	squad *carrierv1alpha1.Squad,
 	allGSSets []*carrierv1alpha1.GameServerSet,
 	newGSSet *carrierv1alpha1.GameServerSet) (int32, error) {
-	klog.V(4).Infof("Get replicas Strategy.Type: %v", squad.Spec.Strategy.Type)
 	switch squad.Spec.Strategy.Type {
 	case carrierv1alpha1.RollingUpdateSquadStrategyType:
 		// Check if we can scale up.
@@ -722,7 +700,7 @@ func NewGSSetNewReplicas(
 				return 0, fmt.Errorf("Waiting for replicas be not ready, current ready: %v", readyReplicas)
 			}
 		}
-		klog.V(4).Infof("Canary update allReplicas: %v", allReplicas)
+		klog.V(4).InfoS("Canary update replicas", "count", allReplicas)
 		if allReplicas == 0 {
 			// When one of the followings is true, return squad's replicas
 			// 1) The first time create squad

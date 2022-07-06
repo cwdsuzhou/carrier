@@ -14,6 +14,12 @@
 
 package util
 
+import (
+	"strconv"
+
+	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
+)
+
 // Merge helps merge labels or annotations
 func Merge(one, two map[string]string) map[string]string {
 	three := make(map[string]string)
@@ -24,4 +30,21 @@ func Merge(one, two map[string]string) map[string]string {
 		three[k] = v
 	}
 	return three
+}
+
+// GetDesiredReplicasAnnotation returns the number of desired replicas
+func GetDesiredReplicasAnnotation(gsSet *carrierv1alpha1.GameServerSet) (int32, bool) {
+	return GetIntFromAnnotation(gsSet, DesiredReplicasAnnotation)
+}
+
+func GetIntFromAnnotation(gsSet *carrierv1alpha1.GameServerSet, annotationKey string) (int32, bool) {
+	annotationValue, ok := gsSet.Annotations[annotationKey]
+	if !ok {
+		return int32(0), false
+	}
+	intValue, err := strconv.Atoi(annotationValue)
+	if err != nil {
+		return int32(0), false
+	}
+	return int32(intValue), true
 }

@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
 	"github.com/ocgi/carrier/pkg/util"
@@ -55,7 +55,7 @@ func (c *Controller) rolloutInplace(squad *carrierv1alpha1.Squad, gsSetList []*c
 		// or the first creation
 		if isFirstCreate {
 			if err := c.clearInplaceUpdateStrategy(squad); err != nil {
-				klog.Errorf("clear threshold failed: %v", err)
+				klog.ErrorS(err, "clear threshold failed", "name", klog.KObj(squad))
 				return err
 			}
 			allGSSet = append(allGSSet, newGSSet)
@@ -97,7 +97,7 @@ func (c *Controller) rolloutInplace(squad *carrierv1alpha1.Squad, gsSetList []*c
 }
 
 func (c *Controller) cleanupGameServerSet(gsSet *carrierv1alpha1.GameServerSet) error {
-	klog.V(4).Infof("Cleans up inplace update annotations of GameServerSet %q", gsSet.Name)
+	klog.V(4).InfoS("Cleans up inplace update annotations", "GameServerSet", klog.KObj(gsSet))
 	delete(gsSet.Annotations, util.GameServerInPlaceUpdateAnnotation)
 	delete(gsSet.Annotations, util.GameServerInPlaceUpdatedReplicasAnnotation)
 	_, err := c.gameServerSetGetter.GameServerSets(gsSet.Namespace).Update(context.TODO(), gsSet, metav1.UpdateOptions{})
@@ -106,7 +106,7 @@ func (c *Controller) cleanupGameServerSet(gsSet *carrierv1alpha1.GameServerSet) 
 
 // clearInplaceUpdateThreshold sets .spec.strategy.inplaceUpdate.threshold to zero and update the input Squad
 func (c *Controller) clearInplaceUpdateStrategy(squad *carrierv1alpha1.Squad) error {
-	klog.V(4).Infof("Cleans up threshold (%v) of squad %q", squad.Spec.Strategy.InplaceUpdate, squad.Name)
+	klog.V(4).InfoS("Cleans up threshold", "threshold", squad.Spec.Strategy.InplaceUpdate, "name", klog.KObj(squad))
 	squadCopy := squad.DeepCopy()
 	threshold := intstr.FromInt(0)
 	squadCopy.Spec.Strategy.InplaceUpdate.Threshold = &threshold

@@ -22,7 +22,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
 	"github.com/ocgi/carrier/pkg/util"
@@ -37,8 +37,7 @@ func (c *Controller) syncRolloutStatus(
 	newGSSet *carrierv1alpha1.GameServerSet,
 	squad *carrierv1alpha1.Squad) error {
 	newStatus := calculateStatus(allGSSets, newGSSet, squad)
-	klog.V(4).Infof("sync squad status: name: %v, spec: %v, status: %+v",
-		squad.ObjectMeta, squad.Spec, newStatus)
+	klog.V(4).InfoS("Sync squad status", "name", klog.KObj(squad), "spec", squad.Spec, "status", newStatus)
 	// If there is only one GameServerSet that is active then that means we are not running
 	// a new rollout and this is a resync where we don't need to estimate any progress.
 	// In such a case, we should simply not estimate any progress for this Squad.

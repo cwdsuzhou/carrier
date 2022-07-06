@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"sort"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/integer"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
@@ -94,10 +94,8 @@ func (c *Controller) reconcileOldGameServerSets(
 	}
 
 	allGameServersCount := GetReplicaCountForGameServerSets(allGSSets)
-	klog.V(4).Infof("New GameServerSet %s/%s has %d ready GameServers.",
-		newGSSet.Namespace,
-		newGSSet.Name,
-		newGSSet.Status.ReadyReplicas)
+	klog.V(4).InfoS("New GameServerSet has ready GameServers.",
+		"name", klog.KObj(newGSSet), "ready", newGSSet.Status.ReadyReplicas)
 	maxUnavailable := MaxUnavailable(*squad)
 	minAvailable := squad.Spec.Replicas - maxUnavailable
 	newGSSetUnreadyGameServerCount := newGSSet.Spec.Replicas - newGSSet.Status.ReadyReplicas
@@ -111,7 +109,7 @@ func (c *Controller) reconcileOldGameServerSets(
 	if err != nil {
 		return false, nil
 	}
-	klog.V(4).Infof("Cleaned up unhealthy replicas from old GSSets by %d", cleanupCount)
+	klog.V(4).InfoS("Cleaned up unhealthy replicas from old GSSets", "cleanup count", cleanupCount)
 
 	// Scale down old GameServerSet, need check maxUnavailable to ensure we can scale down
 	allGSSets = append(oldGSSets, newGSSet)
@@ -119,7 +117,8 @@ func (c *Controller) reconcileOldGameServerSets(
 	if err != nil {
 		return false, nil
 	}
-	klog.V(4).Infof("Scaled down old GSSets of Squad %s by %d", squad.Name, scaledDownCount)
+	klog.V(4).InfoS("Scaled down old GSSets of Squad", "name", klog.KObj(squad), "scaledown count",
+		scaledDownCount)
 
 	totalScaledDown := cleanupCount + scaledDownCount
 	return totalScaledDown > 0, nil
@@ -141,9 +140,8 @@ func (c *Controller) scaleDownOldGameServerSetsForRollingUpdate(
 		// Cannot scale down.
 		return 0, nil
 	}
-	klog.V(4).Infof("Found %d available GameServers in Squad %s, scaling down old GSSets",
-		readyGameServerCount,
-		squad.Name)
+	klog.V(4).InfoS("Found available GameServers in Squad, scaling down old GSSets",
+		"available", readyGameServerCount, "name", klog.KObj(squad))
 
 	sort.Sort(GameServerSetsByCreationTimestamp(oldGSSets))
 

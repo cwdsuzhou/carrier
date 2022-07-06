@@ -35,7 +35,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
 	"github.com/ocgi/carrier/pkg/client/clientset/versioned"
@@ -179,9 +179,9 @@ func (c *Controller) processNextWorkItem() bool {
 // backing GameServerSets
 func (c *Controller) syncSquad(key string) error {
 	startTime := time.Now()
-	klog.V(4).Infof("Started syncing Squad %q (%v)", key, startTime)
+	klog.V(4).InfoS("Started syncing Squaq", "name", key, "start", startTime)
 	defer func() {
-		klog.V(4).Infof("Finished syncing Squad %q (%v)", key, time.Since(startTime))
+		klog.V(4).InfoS("Finished syncing Squad", "name", key, "cost", time.Since(startTime))
 	}()
 
 	// // Convert the namespace/name string into a distinct namespace and name
@@ -237,11 +237,11 @@ func (c *Controller) syncSquad(key string) error {
 		return err
 	}
 	if scalingEvent {
-		klog.V(4).Infof("Scaling squad %v:%v", squad.Namespace, squad.Name)
+		klog.V(4).InfoS("Scaling squad", "name", klog.KObj(squad))
 		return c.sync(squad, gsSetList)
 	}
 
-	klog.V(4).Infof("Reconciling squad %v:%v", squad.Namespace, squad.Name)
+	klog.V(4).InfoS("Reconciling squad", "name", klog.KObj(squad))
 
 	switch squad.Spec.Strategy.Type {
 	case carrierv1alpha1.RecreateSquadStrategyType:
@@ -330,7 +330,7 @@ func (c *Controller) deleteGameServerSet(obj interface{}) {
 	if squad == nil {
 		return
 	}
-	klog.V(4).Infof("GameServerSet %s deleted.", gsSet.Name)
+	klog.V(4).InfoS("GameServerSet deleted.", "name", klog.KObj(gsSet))
 	c.enqueueGameSquad(squad)
 }
 

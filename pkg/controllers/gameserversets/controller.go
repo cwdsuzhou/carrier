@@ -41,7 +41,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
 	"github.com/ocgi/carrier/pkg/client/clientset/versioned"
@@ -211,7 +211,7 @@ func (c *Controller) deleteGamServerSet(obj interface{}) {
 func (c *Controller) worker() {
 	for c.processNextWorkItem() {
 	}
-	klog.Infof("GameServerSet controller worker shutting down")
+	klog.Info("GameServerSet controller worker shutting down")
 }
 
 func (c *Controller) processNextWorkItem() bool {
@@ -244,7 +244,7 @@ func (c *Controller) gameServerEventHandler(obj interface{}) {
 	gsSet, err := c.gameServerSetLister.GameServerSets(gs.Namespace).Get(ref.Name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			klog.Infof("Owner GameServerSet no longer available for syncing, ref: %v", ref)
+			klog.ErrorS(err, "Owner GameServerSet no longer available for syncing", "ref", ref)
 		} else {
 			runtime.HandleError(errors.Wrap(err, "error retrieving GameServer owner"))
 		}
@@ -262,11 +262,14 @@ func (c *Controller) syncGameServerSet(key string) error {
 		runtime.HandleError(errors.Wrapf(err, "invalid resource key"))
 		return nil
 	}
-	klog.V(2).Infof("Sync gameServerSet %v", key)
+	startTime := time.Now()
+	klog.V(2).InfoS("Start sync", "GmeServerSet", key, "startTime", startTime)
+	defer klog.V(4).InfoS("Start sync", "GameServerSet", key, "cost", time.Since(startTime))
+
 	gsSetInCache, err := c.gameServerSetLister.GameServerSets(namespace).Get(name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
-			klog.V(3).Info("GameServerSet is no longer available for syncing")
+			klog.V(3).InfoS("GameServerSet is no longer available for syncing", "name", key)
 			return nil
 		}
 		return errors.Wrapf(err, "error retrieving GameServerSet %s from namespace %s", name, namespace)
@@ -283,7 +286,7 @@ func (c *Controller) syncGameServerSet(key string) error {
 	}
 	gsSet, err = c.syncGameServerSetStatus(gsSet, list)
 	if err != nil {
-		klog.Error(err)
+		klog.ErrorS(err, "Sync game server status", "GameServerSet", key)
 		return err
 	}
 	return nil
@@ -296,20 +299,20 @@ func (c *Controller) syncGameServerSet(key string) error {
 // if scaling down, then inpalce updating. constraint is added, add inplace annotation directly, and go on.
 func (c *Controller) manageReplicas(key string, list []*carrierv1alpha1.GameServer,
 	gsSet *carrierv1alpha1.GameServerSet) error {
-	klog.Infof("Current GameServer number of GameServerSet %v: %v", key, len(list))
+	klog.InfoS("Current GameServer number", "GameServerSet", key, "number", len(list))
 
 	stateful := IsStateful(gsSet)
 	gameServersToAdd, toDeleteList, exceedBurst := computeExpectation(gsSet, list, c.counter, stateful)
 	status := computeStatus(list, gsSet)
-	klog.V(5).Infof("Reconciling GameServerSet name: %v, spec: %v, status: %v", key, gsSet.Spec, status)
+	klog.V(5).InfoS("Reconciling GameServer", "GameServerSet", key, "spec", gsSet.Spec, "status", status)
 	if exceedBurst {
 		defer c.workerQueue.Add(key)
 	}
-	klog.V(2).Infof("GameSeverSet: %v toAdd: %v, toDelete: %v, list: %+v",
-		key, gameServersToAdd, len(toDeleteList), toDeleteList)
+	klog.V(2).InfoS("GameSeverSet info",
+		"name", key, "ToAdd", gameServersToAdd, "count", len(toDeleteList), "toDelete", toDeleteList)
 	if gameServersToAdd > 0 {
 		if err := c.createGameServers(gsSet, gameServersToAdd); err != nil {
-			klog.Errorf("error adding game servers: %v", err)
+			klog.ErrorS(err, "error adding game servers", "GameServerSet", klog.KObj(gsSet))
 		}
 	}
 	var toDeletes, candidates, runnings []*carrierv1alpha1.GameServer
@@ -318,10 +321,10 @@ func (c *Controller) manageReplicas(key string, list []*carrierv1alpha1.GameServ
 		// GameServers can be deleted directly.
 		c.recorder.Eventf(gsSet, corev1.EventTypeNormal, "ToDelete",
 			"Created GameServer: %+v, can delete: %v", len(list), len(toDeleteList))
-		klog.Infof("toDeleteList toDeletes %v, candidates %v, runnings %v",
-			len(toDeletes), len(candidates), len(runnings))
+		klog.InfoS("To delete list classification result",
+			"ToDelete", len(toDeletes), "Candidates", len(candidates), "Runnings", len(runnings))
 		if err := c.deleteGameServers(gsSet, toDeletes); err != nil {
-			klog.Errorf("error deleting game servers: %v", err)
+			klog.ErrorS(err, "error deleting game servers", "GameServerSet", klog.KObj(gsSet))
 			return err
 		}
 		if err := c.markGameServersOutOfService(gsSet, runnings); err != nil {
@@ -332,7 +335,7 @@ func (c *Controller) manageReplicas(key string, list []*carrierv1alpha1.GameServ
 	var err error
 	gsSet, err = c.syncGameServerSetStatus(gsSet, list)
 	if err != nil {
-		klog.Error(err)
+		klog.ErrorS(err, "sync status", "GameServerSet", key)
 		return err
 	}
 	if status.Replicas-int32(len(toDeleteList))+int32(gameServersToAdd) != gsSet.Spec.Replicas {
@@ -353,18 +356,19 @@ func (c *Controller) doInPlaceUpdate(gsSet *carrierv1alpha1.GameServerSet) error
 	if !inPlaceUpdating {
 		return nil
 	}
-	klog.V(4).Infof("desired threshold : %v", gsSet.Annotations[util.GameServerInPlaceUpdateAnnotation])
-	klog.V(4).Infof("desired gsSet hash: %v", gsSet.Labels[util.GameServerHash])
+	klog.V(4).InfoS("Do InPlace update", "desired threshold",
+		gsSet.Annotations[util.GameServerInPlaceUpdateAnnotation], "hash", gsSet.Labels[util.GameServerHash],
+		"GameServerSet", klog.KObj(gsSet))
 	// get servers from lister, may exist race
 	oldGameServers, newGameServers, err := c.getOldAndNewReplicas(gsSet)
 	if err != nil {
-		klog.Error(err)
+		klog.ErrorS(err, "get old and new replicas", "GameServerSet", klog.KObj(gsSet))
 		return err
 	}
 	diff := desired - len(newGameServers)
 	updatedCount := GetGameServerSetInplaceUpdateStatus(gsSet)
-	klog.V(4).Infof("desired replicas satisfied, desired: %v, "+
-		"diff: %v, new version: %v, updated according to ann: %v", desired, diff, len(newGameServers), updatedCount)
+	klog.V(4).InfoS("Desired replicas satisfied", "desired", desired, "diff", diff,
+		"new", len(newGameServers), "updated", updatedCount)
 	if diff <= 0 || updatedCount >= int32(desired) {
 		// scale up when inplace updating
 		if len(newGameServers) > int(updatedCount) {
@@ -469,23 +473,23 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 			// GameServer has constraint but may still have player.
 			// if excludeConstraintGS is true, we exclude this, otherwise, include.
 			if gameservers.IsOutOfService(gs) && excludeConstraintGS && !gameservers.IsInPlaceUpdating(gs) {
-				klog.V(4).Infof("GameServer %v is out of service and required excludeConstraint", gs.Name)
+				klog.V(4).InfoS("Out of service and required excludeConstraint", "GameServer", klog.KObj(gs))
 				continue
 			}
 
 			// GameServer is offline, should delete and add new one
 			if gameservers.IsDeletableWithGates(gs) {
 				toDeleteGameServers = append(toDeleteGameServers, gs)
-				klog.V(4).Infof("GameServer %v is out of service and and ready to be delete", gs.Name)
-				klog.V(5).Infof("GameServer annotations: %v, label: %v, condition: %+v",
-					gs.Annotations, gs.Labels, gs.Status.Conditions)
+				klog.V(4).InfoS("Out of service and and ready to be delete", "GameServer", klog.KObj(gs))
+				klog.V(5).InfoS("GameServer Info", "annotations", gs.Annotations, "label", gs.Labels, "condition",
+					gs.Status.Conditions)
 				continue
 			} else {
 				upCount++
 			}
 		default:
 			toDeleteGameServers = append(toDeleteGameServers, gs)
-			klog.Infof("GS state: %v", gs.Status.State)
+			klog.InfoS("GameServer state", "state", gs.Status.State, "GameServer", klog.KObj(gs))
 			continue
 		}
 		potentialDeletions = append(potentialDeletions, gs)
@@ -493,7 +497,8 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 	diff := int(gsSet.Spec.Replicas) - upCount
 	var exceedBurst bool
 	var toAdd int
-	klog.Infof("targetReplicaCount: %v, upcount: %v", int(gsSet.Spec.Replicas), upCount)
+	klog.InfoS("GameServerSet compute expectation", "target count", int(gsSet.Spec.Replicas), "upcount", upCount,
+		"GameServer", klog.KObj(gsSet))
 	if diff > 0 {
 		toAdd = diff
 		if toAdd > BurstReplicas {
@@ -528,8 +533,8 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 		currentCandidateCount := len(potentialDeletions)
 		potentialDeletions = append(potentialDeletions, runnings...)
 		sumCandidateCount := len(potentialDeletions)
-		klog.Infof("deletables:%v, deleteCandidates:%v, runnings:%v",
-			len(deletables), len(deleteCandidates), len(runnings))
+		klog.InfoS("GameServerSet compute expectation diff < 0",
+			"deletables", len(deletables), "candidates", len(deleteCandidates), "runnings", len(runnings))
 
 		if sumCandidateCount < toDelete {
 			toDelete = sumCandidateCount
@@ -545,7 +550,7 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 		}
 
 		// for stateful but check, index.
-		desireAnn, exist := getDesiredReplicasAnnotation(gsSet)
+		desireAnn, exist := util.GetDesiredReplicasAnnotation(gsSet)
 		if !exist && gsSet.Spec.Replicas == 0 {
 			return toAdd, toDeleteGameServers, exceedBurst
 		}
@@ -563,8 +568,8 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 // inplaceUpdateGameServers update GameServer spec to api server
 func (c *Controller) inplaceUpdateGameServers(gsSet *carrierv1alpha1.GameServerSet,
 	toUpdate []*carrierv1alpha1.GameServer) (int32, error) {
-	klog.Infof("Updating GameServers: %v, to update %v", gsSet.Name, len(toUpdate))
-	if klog.V(5) {
+	klog.InfoS("Inplace updating doing", "GameServerSet", klog.KObj(gsSet), "update", len(toUpdate))
+	if klog.V(5).Enabled() {
 		printGameServerName(toUpdate, "GameServer to in place update:")
 	}
 	var errs []error
@@ -585,7 +590,7 @@ func (c *Controller) inplaceUpdateGameServers(gsSet *carrierv1alpha1.GameServerS
 				return
 			}
 			if gameservers.IsReady(newGS) && gameservers.IsReadinessExist(newGS) {
-				klog.Infof("GameServer %v is not before ready now, will not update", gs.Name)
+				klog.InfoS("GameServer is not before ready now, will not update", "name", klog.KObj(newGS))
 				return
 			}
 		}
@@ -613,7 +618,7 @@ func (c *Controller) inplaceUpdateGameServers(gsSet *carrierv1alpha1.GameServerS
 
 // createGameServer will add more servers according to diff
 func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, count int) error {
-	klog.Infof("Adding more GameServers: %v, count: %v", gsSet.Name, count)
+	klog.InfoS("Adding more GameServers", "name", klog.KObj(gsSet), "count", count)
 	var errs []error
 	gs := BuildGameServer(gsSet)
 	gameservers.ApplyDefaults(gs)
@@ -678,8 +683,8 @@ func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, cou
 // we delete the GameServers.
 func (c *Controller) deleteGameServers(gsSet *carrierv1alpha1.GameServerSet,
 	toDelete []*carrierv1alpha1.GameServer) error {
-	klog.Infof("Deleting GameServers: %v, to delete %v", gsSet.Name, len(toDelete))
-	if klog.V(5) {
+	klog.InfoS("Deleting GameServers", "GameServerSet", klog.KObj(gsSet), "to delete", len(toDelete))
+	if klog.V(5).Enabled() {
 		printGameServerName(toDelete, "GameServer to delete:")
 	}
 	var errs []error
@@ -700,7 +705,7 @@ func (c *Controller) deleteGameServers(gsSet *carrierv1alpha1.GameServerSet,
 				return
 			}
 			if gameservers.IsReady(newGS) && gameservers.IsReadinessExist(newGS) {
-				klog.Infof("GameServer %v is not before ready now, will not delete", gs.Name)
+				klog.InfoS("GameServer is not before ready now, will not delete", "name", klog.KObj(newGS))
 				return
 			}
 		}
@@ -721,12 +726,12 @@ type opt func(g *carrierv1alpha1.GameServer)
 // markGameServersOutOfService marks GameServers not in Service.
 func (c *Controller) markGameServersOutOfService(gsSet *carrierv1alpha1.GameServerSet,
 	toMark []*carrierv1alpha1.GameServer, opts ...opt) error {
-	klog.Infof("Marking GameServers not in service: %v, to mark out of service %v", gsSet.Name, toMark)
+	klog.InfoS("Marking GameServers not in service, to mark out of service",
+		"GameServerSet", gsSet.Name, "toMark", toMark)
 	var errs []error
-	if klog.V(5) {
+	if klog.V(5).Enabled() {
 		printGameServerName(toMark, "GameServer to mark out of service:")
 	}
-	klog.Infof("gss %v mark %v", gsSet.Name, len(toMark))
 	workqueue.ParallelizeUntil(context.Background(), BurstReplicas, len(toMark), func(piece int) {
 		gs := toMark[piece]
 		gsCopy := gs.DeepCopy()
@@ -793,13 +798,13 @@ func (c *Controller) patchGameServerIfChanged(gsSet *carrierv1alpha1.GameServerS
 	if err != nil {
 		return gsSet, err
 	}
-	klog.V(3).Infof("GameServerSet %v got to scaling: %+v", gsSet.Name, gsSetCopy.Status.Conditions)
+	klog.V(3).InfoS("GameServerSet go to scaling", "name", gsSet.Name, "old conditions", gsSetCopy.Status.Conditions)
 	gsSetCopy, err = c.carrierClient.CarrierV1alpha1().GameServerSets(gsSet.Namespace).
 		Patch(context.TODO(), gsSet.Name, types.MergePatchType, patch, metav1.PatchOptions{}, "status")
 	if err != nil {
 		return nil, errors.Wrapf(err, "error updating status on GameServerSet %s", gsSet.Name)
 	}
-	klog.V(3).Infof("GameServerSet %v got to scaling: %+v", gsSet.Name, gsSetCopy.Status.Conditions)
+	klog.V(3).InfoS("GameServerSet go to scaling", "name", gsSet.Name, "new conditions", gsSetCopy.Status.Conditions)
 	return gsSetCopy, nil
 }
 
@@ -916,27 +921,6 @@ func sortGameServers(potentialDeletions []*carrierv1alpha1.GameServer,
 
 func printGameServerName(list []*carrierv1alpha1.GameServer, prefix string) {
 	for _, server := range list {
-		klog.Infof("%v %v", prefix, server.Name)
+		klog.InfoS(prefix, "GameServer", klog.KObj(server))
 	}
-}
-
-// getDesiredReplicasAnnotation returns the number of desired replicas
-func getDesiredReplicasAnnotation(gsSet *carrierv1alpha1.GameServerSet) (int32, bool) {
-	return getIntFromAnnotation(gsSet, util.DesiredReplicasAnnotation)
-}
-
-func getIntFromAnnotation(gsSet *carrierv1alpha1.GameServerSet, annotationKey string) (int32, bool) {
-	annotationValue, ok := gsSet.Annotations[annotationKey]
-	if !ok {
-		return int32(0), false
-	}
-	intValue, err := strconv.Atoi(annotationValue)
-	if err != nil {
-		klog.V(2).Infof("Cannot convert the value %q with annotation key %q for the GameServerSet %q",
-			annotationValue,
-			annotationKey,
-			gsSet.Name)
-		return int32(0), false
-	}
-	return int32(intValue), true
 }

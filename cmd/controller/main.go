@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	componentbaseconfig "k8s.io/component-base/config"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/ocgi/carrier/cmd/controller/app"
 	"github.com/ocgi/carrier/pkg/apis/carrier"

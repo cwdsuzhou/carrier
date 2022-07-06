@@ -23,10 +23,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/integer"
 
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
+	"github.com/ocgi/carrier/pkg/util"
 	"github.com/ocgi/carrier/pkg/util/kube"
 )
 
@@ -95,7 +96,7 @@ func (c *Controller) deleteFirst(squad *carrierv1alpha1.Squad, gsSetList []*carr
 	allGSSets := append(oldGSSets, newGSSet)
 	activeOldGSSets := FilterActiveGameServerSets(oldGSSets)
 	// scale down old GameServerSets.
-	klog.V(4).Infof("Canary update delete old set replicas start")
+	klog.V(4).InfoS("Canary update delete old set replicas start", "name", klog.KObj(squad))
 	scaledDown, err := c.scaleDownOldGameServerSetsForCanary(allGSSets, activeOldGSSets, newGSSet, squad)
 	if err != nil {
 		return err
@@ -115,7 +116,7 @@ func (c *Controller) deleteFirst(squad *carrierv1alpha1.Squad, gsSetList []*carr
 	}
 
 	// scale up new GameServerSet.
-	klog.V(4).Infof("Canary update add new set replicas start")
+	klog.V(4).InfoS("Canary update add new set replicas start", "name", klog.KObj(squad))
 	if _, err := c.scaleUpNewGameServerSetForCanary(allGSSets, newGSSet, squad); err != nil {
 		return err
 	}
@@ -176,7 +177,7 @@ func (c *Controller) scaleUpNewGameServerSetForCanary(
 			return false, err
 		}
 	}
-	klog.V(4).Infof("Scaling GameServerSet new replicas: %v", newReplicasCount)
+	klog.V(4).InfoS("Scaling GameServerSet", "new replicas", newReplicasCount, "name", klog.KObj(newGSSet))
 	scaled, _, err := c.scaleGameServerSetAndRecordEvent(newGSSet, newReplicasCount, squad)
 	return scaled, err
 }
@@ -195,17 +196,16 @@ func (c *Controller) scaleDownOldGameServerSetsForCanary(
 	threshold := CanaryThreshold(*squad)
 	if newGSSet != nil && newGSSet.Status.ReadyReplicas < newGSSet.Spec.Replicas {
 		// wait for new replicas are ready
-		klog.V(4).Infof("Found %d ready GameServers in new GameServerSet %s/%s",
-			newGSSet.Status.ReadyReplicas,
-			newGSSet.Namespace,
-			newGSSet.Name)
+		klog.V(4).InfoS("Found GameServers in new GameServerSet",
+			"ready", newGSSet.Status.ReadyReplicas,
+			"GameServerSet", klog.KObj(newGSSet))
 		return false, nil
 	}
 
 	// allOldGameServersCount := GetReplicaCountForGameServerSets(oldGSSets)
-	klog.V(4).Infof("%d old GameServer for squad: %v", oldGameServersCount, squad.ObjectMeta)
+	klog.V(4).InfoS("Old GameServer for squad", "count", oldGameServersCount, "squad", klog.KObj(squad))
 	actives := FilterActiveGameServerSets(oldGSSets)
-	oldDesired, _ := GetDesiredReplicasAnnotation(actives[0])
+	oldDesired, _ := util.GetDesiredReplicasAnnotation(actives[0])
 
 	maxScaledDown := oldGameServersCount + threshold - integer.Int32Min(oldDesired, squad.Spec.Replicas)
 	if maxScaledDown <= 0 {
@@ -217,7 +217,7 @@ func (c *Controller) scaleDownOldGameServerSetsForCanary(
 	if err != nil {
 		return false, nil
 	}
-	klog.V(4).Infof("Cleaned up unhealthy replicas from old GSSets by %d", cleanupCount)
+	klog.V(4).InfoS("Cleaned up unhealthy replicas from old GSSets", "count", cleanupCount)
 	maxScaledDown = maxScaledDown - cleanupCount
 	if maxScaledDown <= 0 {
 		return false, nil
@@ -255,7 +255,8 @@ func (c *Controller) scaleDownOldGameServerSetsForCanary(
 
 // clearThreshold sets .spec.strategy.canaryUpdate.threshold to zero and update the input Squad
 func (c *Controller) clearThreshold(squad *carrierv1alpha1.Squad) error {
-	klog.V(4).Infof("Cleans up threshold (%v) of squad %q", squad.Spec.Strategy.CanaryUpdate, squad.Name)
+	klog.V(4).InfoS("Cleans up threshold of squad", "threshold", squad.Spec.Strategy.CanaryUpdate, "squad",
+		klog.KObj(squad))
 	squadCopy := squad.DeepCopy()
 	threshold := intstr.FromInt(0)
 	squadCopy.Spec.Strategy.CanaryUpdate.Threshold = &threshold

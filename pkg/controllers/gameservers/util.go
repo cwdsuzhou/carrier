@@ -21,7 +21,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/ocgi/carrier/pkg/apis/carrier"
 	carrierv1alpha1 "github.com/ocgi/carrier/pkg/apis/carrier/v1alpha1"
@@ -210,7 +210,7 @@ func buildPod(gs *carrierv1alpha1.GameServer) (*corev1.Pod, error) {
 		if err != nil {
 			return pod, err
 		}
-		klog.V(5).Infof("Found desired container %v", i)
+		klog.V(5).InfoS("Found desired container", "index", i, "GameServer", klog.KObj(gs))
 		for _, p := range gs.Spec.Ports {
 			if p.ContainerPort != nil {
 				cp := corev1.ContainerPort{
@@ -245,7 +245,7 @@ func buildPod(gs *carrierv1alpha1.GameServer) (*corev1.Pod, error) {
 				}
 			}
 		}
-		klog.V(5).Infof("Final desired container %+v", gsContainer)
+		klog.V(5).InfoS("Final desired container", "container", gsContainer.String())
 		pod.Spec.Containers[i] = gsContainer
 	}
 
