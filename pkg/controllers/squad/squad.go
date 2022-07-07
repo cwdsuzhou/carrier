@@ -491,7 +491,7 @@ func (c *Controller) scaleGameServerSet(
 		}
 		// check if this id an old version
 		if ComputePodSpecHash(&gsSet.Spec.Template.Spec.Template.Spec) != ComputePodSpecHash(&squad.Spec.Template.Spec.
-			Template.Spec) {
+			Template.Spec) && IsCanaryUpdate(squad) {
 			// 	IsCanaryUpdate do not update annotation again for old rev
 		} else {
 			SetReplicasAnnotations(gsSetCopy, squad.Spec.Replicas, squad.Spec.Replicas+MaxSurge(*squad))
