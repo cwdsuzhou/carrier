@@ -18,21 +18,26 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/pflag"
 	apiv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	ext "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/routes"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	componentbaseconfig "k8s.io/component-base/config"
+	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
 
 	"github.com/ocgi/carrier/cmd/controller/app"
@@ -93,6 +98,16 @@ func main() {
 	coreFactory.Start(stop)
 	carrierFactory.Start(stop)
 	run := func(ctx context.Context) {
+		http.Handle("/metrics", promhttp.Handler())
+		http.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Write([]byte("ok"))
+		}))
+		http.Handle("/debug/flags/v", routes.StringFlagPutHandler(logs.GlogSetter))
+		go func() {
+			if err = http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", runConfig.HttpPort), nil); err != nil {
+				panic(err)
+			}
+		}()
 		for _, c := range []controllers.Controller{gscontroller, gsscontroller, sqdcontroller} {
 			go func(c controllers.Controller) {
 				err := c.Run(10, ctx.Done())

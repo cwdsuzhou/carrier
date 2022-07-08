@@ -46,6 +46,8 @@ type RunOptions struct {
 	MinPort int
 	// MaxPort of dynamic port allocation
 	MaxPort int
+	// HttpPort is the port for metric, log or health check
+	HttpPort int
 }
 
 // NewServerRunOptions initialize the running options
@@ -77,6 +79,7 @@ func (s *RunOptions) addControllerFlags() {
 	pflag.BoolVar(&s.ShowVersion, "version", s.ShowVersion, "version of carrier.")
 	pflag.IntVar(&s.MinPort, "min-port", 10000, "min port for dynamic allocation")
 	pflag.IntVar(&s.MaxPort, "max-port", 20000, "max port for dynamic allocation")
+	pflag.IntVar(&s.HttpPort, "http-port", 8090, "HttpPort is the port for metric, log or health check")
 }
 
 // NewConfig builds kube config
