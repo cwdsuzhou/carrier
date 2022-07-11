@@ -93,4 +93,6 @@ const (
 	GameServerInPlaceUpdatingAnnotation = "carrier.ocgi.dev/inplace-updating"
 	// GameServerDynamicPortAllocated port allocated for dynamic policy.
 	GameServerDynamicPortAllocated = "carrier.ocgi.dev/dynamic-port-allocated"
+	// GameServerStateful means this is a stateful GameSerer.
+	GameServerStateful = "carrier.ocgi.dev/stateful"
 )

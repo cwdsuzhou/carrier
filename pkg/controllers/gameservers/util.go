@@ -617,5 +617,5 @@ func updateStorage(gs *carrierv1alpha1.GameServer, pod *corev1.Pod) {
 }
 
 func IsStateful(gs *carrierv1alpha1.GameServer) bool {
-	return len(gs.Spec.VolumeClaimTemplates) > 0
+	return len(gs.Spec.VolumeClaimTemplates) > 0 || gs.Annotations[util.GameServerStateful] == "true"
 }

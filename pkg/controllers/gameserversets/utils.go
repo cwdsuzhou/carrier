@@ -147,7 +147,8 @@ func ListGameServersByGameServerSetOwner(gameServerLister listerv1.GameServerLis
 }
 
 func IsStateful(gsSet *carrierv1alpha1.GameServerSet) bool {
-	return len(gsSet.Spec.Template.Spec.VolumeClaimTemplates) > 0
+	return len(gsSet.Spec.Template.Spec.VolumeClaimTemplates) > 0 || gsSet.Spec.Template.Annotations[util.
+		GameServerStateful] == "true"
 }
 
 // descendingOrdinal is a sort.Interface that Sorts a list of Pods based on the ordinals extracted
