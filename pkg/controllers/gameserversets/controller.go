@@ -636,6 +636,7 @@ func (c *Controller) createGameServers(gsSet *carrierv1alpha1.GameServerSet, cou
 				if gsInCache.DeletionTimestamp != nil {
 					return fmt.Errorf("GameServer %v is deleting, retry", name)
 				}
+				// TODO check pod exits.
 				i++
 				continue
 			}

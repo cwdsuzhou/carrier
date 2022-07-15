@@ -80,6 +80,15 @@ func (c *Controller) syncRolloutStatus(
 			SetSquadCondition(&newStatus, *condition)
 		}
 	}
+	if newGSSet != nil {
+		desired, _ := util.GetDesiredReplicasAnnotation(newGSSet)
+		if desired != squad.Spec.Replicas {
+			SetReplicasAnnotations(newGSSet, squad.Spec.Replicas, squad.Spec.Replicas)
+			_, err := c.gameServerSetGetter.GameServerSets(newGSSet.Namespace).Update(context.TODO(), newGSSet,
+				metav1.UpdateOptions{})
+			return err
+		}
+	}
 
 	// Move failure conditions of all GameServerSets in Squad conditions. For now,
 	// only one failure condition is returned from getReplicaFailures.
