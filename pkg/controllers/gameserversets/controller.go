@@ -554,7 +554,7 @@ func computeExpectation(gsSet *carrierv1alpha1.GameServerSet,
 		if !exist && gsSet.Spec.Replicas == 0 {
 			return toAdd, toDeleteGameServers, exceedBurst
 		}
-		if desireAnn == gsSet.Status.ReadyReplicas && desireAnn == gsSet.Spec.Replicas {
+		if desireAnn == gsSet.Status.ReadyReplicas && desireAnn == gsSet.Spec.Replicas && len(potentialDeletions) > 0 {
 			// check order
 			sort.Sort(descendingOrdinal(potentialDeletions))
 			if GetOrdinal(potentialDeletions[0]) != int(gsSet.Status.ReadyReplicas)-1 {
